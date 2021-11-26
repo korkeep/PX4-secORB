@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2019 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2019 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,65 +40,19 @@
 
 #include <px4_platform_common/defines.h>
 #include <systemlib/err.h>
-
 #include <uORB/uORB.h>
 #include "uORBDeviceNode.hpp"
-#include <uORB/topics/uORBTopics.hpp>
+
+#include "Publication.hpp"
 
 namespace uORB
 {
 
-template <typename U> class DefaultQueueSize
-{
-private:
-	template <typename T>
-	static constexpr uint8_t get_queue_size(decltype(T::ORB_QUEUE_LENGTH) *)
-	{
-		return T::ORB_QUEUE_LENGTH;
-	}
-
-	template <typename T> static constexpr uint8_t get_queue_size(...)
-	{
-		return 1;
-	}
-
-public:
-	static constexpr unsigned value = get_queue_size<U>(nullptr);
-};
-
-class PublicationBase
-{
-public:
-
-	bool advertised() const { return _handle != nullptr; }
-
-	bool unadvertise() { return (DeviceNode::unadvertise(_handle) == PX4_OK); }
-
-	orb_id_t get_topic() const { return get_orb_meta(_orb_id); }
-
-protected:
-
-	PublicationBase(ORB_ID id) : _orb_id(id) {}
-
-	~PublicationBase()
-	{
-		if (_handle != nullptr) {
-			// don't automatically unadvertise queued publications (eg vehicle_command)
-			if (static_cast<DeviceNode *>(_handle)->get_queue_size() == 1) {
-				unadvertise();
-			}
-		}
-	}
-
-	orb_advert_t _handle{nullptr};
-	const ORB_ID _orb_id;
-};
-
 /**
- * uORB publication wrapper class
+ * Base publication multi wrapper class
  */
-template<typename T, uint8_t ORB_QSIZE = DefaultQueueSize<T>::value>
-class Publication : public PublicationBase
+template<typename T, uint8_t QSIZE = DefaultQueueSize<T>::value>
+class PublicationMulti : public PublicationBase
 {
 public:
 
@@ -107,13 +61,19 @@ public:
 	 *
 	 * @param meta The uORB metadata (usually from the ORB_ID() macro) for the topic.
 	 */
-	Publication(ORB_ID id) : PublicationBase(id) {}
-	Publication(const orb_metadata *meta) : PublicationBase(static_cast<ORB_ID>(meta->o_id)) {}
+	PublicationMulti(ORB_ID id) :
+		PublicationBase(id)
+	{}
+
+	PublicationMulti(const orb_metadata *meta) :
+		PublicationBase(static_cast<ORB_ID>(meta->o_id))
+	{}
 
 	bool advertise()
 	{
 		if (!advertised()) {
-			_handle = orb_advertise_queue(get_topic(), nullptr, ORB_QSIZE);
+			int instance = 0;
+			_handle = orb_advertise_multi_queue(get_topic(), nullptr, &instance, QSIZE);
 		}
 
 		return advertised();
@@ -129,15 +89,25 @@ public:
 			advertise();
 		}
 
-		return (DeviceNode::publish(get_topic(), _handle, &data) == PX4_OK);
+		return (orb_publish(get_topic(), _handle, &data) == PX4_OK);
+	}
+
+	int get_instance()
+	{
+		// advertise if not already advertised
+		if (advertise()) {
+			return static_cast<uORB::DeviceNode *>(_handle)->get_instance();
+		}
+
+		return -1;
 	}
 };
 
 /**
- * The publication class with data embedded.
+ * The publication multi class with data embedded.
  */
 template<typename T>
-class PublicationData : public Publication<T>
+class PublicationMultiData : public PublicationMulti<T>
 {
 public:
 	/**
@@ -145,18 +115,18 @@ public:
 	 *
 	 * @param meta The uORB metadata (usually from the ORB_ID() macro) for the topic.
 	 */
-	PublicationData(ORB_ID id) : Publication<T>(id) {}
-	PublicationData(const orb_metadata *meta) : Publication<T>(meta) {}
+	PublicationMultiData(ORB_ID id) : PublicationMulti<T>(id) {}
+	PublicationMultiData(const orb_metadata *meta) : PublicationMulti<T>(meta) {}
 
 	T	&get() { return _data; }
 	void	set(const T &data) { _data = data; }
 
 	// Publishes the embedded struct.
-	bool	update() { return Publication<T>::publish(_data); }
+	bool	update() { return PublicationMulti<T>::publish(_data); }
 	bool	update(const T &data)
 	{
 		_data = data;
-		return Publication<T>::publish(_data);
+		return PublicationMulti<T>::publish(_data);
 	}
 
 private:

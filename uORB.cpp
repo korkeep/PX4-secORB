@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2016 Jin Wu. All rights reserved.
+ *   Copyright (c) 2012-2015 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -12,7 +12,7 @@
  *    notice, this list of conditions and the following disclaimer in
  *    the documentation and/or other materials provided with the
  *    distribution.
- * 3. Neither the name AMOV nor the names of its contributors may be
+ * 3. Neither the name PX4 nor the names of its contributors may be
  *    used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
@@ -31,907 +31,447 @@
  *
  ****************************************************************************/
 
-
-/* @Author : Jin Wu
-   
-   E-mail: jin_wu_uestc@hotmail.com
-   Website: www.jinwu.science
-*/
-
+/**
+ * @file uORB.cpp
+ * A lightweight object broker.
+ */
 
 #include "uORB.h"
-#include <drv_hrt.h>
-#include "topics/parameter_update.h"
-#include "uORBHelper.h"
-#include <cstdlib>
-#include <cstring>
-#include <poll.h>
 
-#ifdef USE_UORB_CCMRAM
+#include "uORBManager.hpp"
+#include "uORBCommon.hpp"
 
-#include "uORBRam.h"
+#include <lib/drivers/device/Device.hpp>
+#include <matrix/Quaternion.hpp>
+#include <mathlib/mathlib.h>
 
-#pragma default_variable_attributes = @ ".ccmram"
-uORBRam _ccmram;
-#endif
+static uORB::DeviceMaster *g_dev = nullptr;
 
-ORBData               *orb_data[total_uorb_num];
-
-pollfd_struct_t       poll_queue[UORB_MAX_POLL];
-
-#ifdef USE_UORB_CCMRAM
-#pragma default_variable_attributes =
-#endif
-
-  
-
-
-
-//flag that indicates if we have entered the operating system
-bool orb_in_os = false;
-
-int orb_lock(void)
+int uorb_start(void)
 {
-    if(orb_in_os)
-    {
-        return osEnterCritical();
-    }
-    
-    return -1;
+	if (g_dev != nullptr) {
+		PX4_WARN("already loaded");
+		/* user wanted to start uorb, its already running, no error */
+		return 0;
+	}
+
+	if (!uORB::Manager::initialize()) {
+		PX4_ERR("uorb manager alloc failed");
+		return -ENOMEM;
+	}
+
+	/* create the driver */
+	g_dev = uORB::Manager::get_instance()->get_device_master();
+
+	if (g_dev == nullptr) {
+		return -errno;
+	}
+
+	return OK;
 }
 
-void orb_unlock(int state)
+int uorb_status(void)
 {
-    if(orb_in_os && state != -1)
-    {
-        osExitCritical(state);
-    }
+	if (g_dev != nullptr) {
+		g_dev->printStatistics();
+
+	} else {
+		PX4_INFO("uorb is not running");
+	}
+
+	return OK;
 }
 
-
-void orb_sem_lock(ORBData *_orb)
+int uorb_top(char **topic_filter, int num_filters)
 {
-    if(_orb && orb_in_os)
-    {
-        int32_t res = osSemaphoreWait(_orb->sem, 0xFFFFFFFF);
-        switch (res) {
-            case osOK:
-                _orb->sem_taken = true;
-                break;
-            case osErrorResource:
-                _orb->sem_taken = false;
-                break;
-            case osErrorParameter:
-                _orb->sem_taken = false;
-                break;
-            default:
-                _orb->sem_taken = false;
-                break;
-       }
-    }
+	if (g_dev != nullptr) {
+		g_dev->showTop(topic_filter, num_filters);
+
+	} else {
+		PX4_INFO("uorb is not running");
+	}
+
+	return OK;
 }
 
-void orb_sem_unlock(ORBData *_orb)
-{
-    if(_orb && orb_in_os)
-    {
-        int32_t res = osSemaphoreRelease (_orb->sem);
-        if (res == osOK) {
-            _orb->sem_taken = false;
-        }
-    }
-}
 
 orb_advert_t orb_advertise(const struct orb_metadata *meta, const void *data)
-{   
-    return orb_advertise_multi(meta, data, nullptr, ORB_PRIO_MAX);
+{
+	return uORB::Manager::get_instance()->orb_advertise(meta, data);
 }
 
 orb_advert_t orb_advertise_queue(const struct orb_metadata *meta, const void *data, unsigned int queue_size)
 {
-	return orb_advertise_multi_queue(meta, data, nullptr, ORB_PRIO_MAX, queue_size);
+	return uORB::Manager::get_instance()->orb_advertise(meta, data, queue_size);
 }
 
-
-//Unqueued version
-orb_advert_t orb_advertise_multi(const struct orb_metadata *meta, const void *data, int *instance,
-				 int priority)
+orb_advert_t orb_advertise_multi(const struct orb_metadata *meta, const void *data, int *instance)
 {
-    
-    orb_advert_t advert = nullptr;
-    
-    //get the serial number of the current orb
-    int serial = get_orb_serial(meta->o_name);
-    
-    //we get an effective and multi-prio orb
-    if(serial != -1)
-    {   
-        //search for existing orb
-        int inst = get_orb_instance_according_to_priority(priority);
-        
-        if(!is_orb_multi(serial))
-            inst = 0;
-        
-        if(instance != nullptr)
-            *instance = inst;
-        
-        //If we find it, copy the data
-        if(inst != -1)
-        {
-            orb_sem_lock(&orb_data[serial][inst]);
-            
-            //reset the published flag to false to prevent subscribing and checking
-            orb_data[serial][inst].published = false;
-            
-            int atomic_state = orb_lock();
-            
-            if(orb_data[serial][inst].data == nullptr)
-            {
-#ifndef USE_UORB_CCMRAM
-                orb_data[serial][inst].data = new uint8_t[meta->o_size];
-#else
-                orb_data[serial][inst].data = (uint8_t*)_ccmram.uORBDataCalloc(meta->o_size, 1);
-#endif
-            }
-            
-            //copy the data
-            std::memcpy(orb_data[serial][inst].data, data, meta->o_size);
-            
-            orb_unlock(atomic_state);
-            
-            //copy the serial number
-            orb_data[serial][inst].serial = serial;
-        
-            //name the advert as the pointer of the orb's internal data
-            advert = (void*)(&orb_data[serial][inst]);
-            
-            //get the current system time in us
-            orb_data[serial][inst].last_updated_time = hrt_absolute_time();
-            
-            //update the published flag to true
-            orb_data[serial][inst].published = true;
-            
-            int task_id = (int)osThreadGetId();
-            for(int i = 0; i < UORB_MAX_SUB; ++i)
-            {
-                orb_data[serial][inst].authority_list[i] = -1;
-            }
-            
-            orb_sem_unlock(&orb_data[serial][inst]);
-        }
-    }
-    
-    return advert;
-}
-
-//Queued version
-orb_advert_t orb_advertise_multi(const struct orb_metadata *meta, const void *data, int *instance,
-				 int priority,size_t queue_size)
-{   
-    orb_advert_t advert = nullptr;
-    
-    //get the serial number
-    int serial = get_orb_serial(meta->o_name);
-    
-    if(serial != -1)
-    {   
-        //search for existing orb
-        int inst = get_orb_instance_according_to_priority(priority);
-        if(instance != nullptr)
-            *instance = inst;
-        
-        //If we find it, allocate data region for copy
-        if(inst != -1)
-        {
-            orb_sem_lock(&orb_data[serial][inst]);
-            
-            orb_data[serial][inst].published = false;
-            
-            //If the queue does not exist, allocate one
-            if(orb_data[serial][inst].queue == nullptr)
-            {
-                orb_data[serial][inst].queue = new ringbuffer::RingBuffer(queue_size, meta->o_size);
-                orb_data[serial][inst].queue->flush();
-            }
-            
-            //Enqueue the data into the current queue
-            //Already full, get one and remove it from the queue
-            if(orb_data[serial][inst].queue->full())
-            {
-                
-                uint8_t buff[255];
-                
-                orb_data[serial][inst].queue->get(buff, meta->o_size);
-        
-                int atomic_state = orb_lock();
-                
-                if(orb_data[serial][inst].data == nullptr)
-                {
-#ifndef USE_UORB_CCMRAM
-                    orb_data[serial][inst].data = new uint8_t[meta->o_size];
-#else
-                    orb_data[serial][inst].data = (uint8_t*)_ccmram.uORBDataCalloc(meta->o_size, 1);
-#endif
-                }
-                
-                std::memcpy(orb_data[serial][inst].data, buff, meta->o_size);
-                
-                orb_unlock(atomic_state);
-                
-                orb_data[serial][inst].serial = serial;
-            }
-            
-            //Now we have some space, send in no time
-            orb_data[serial][inst].queue->put(data, meta->o_size);     
-        
-            advert = (void*)(&orb_data[serial][inst]);
-            
-            orb_data[serial][inst].last_updated_time = hrt_absolute_time();
-            
-            orb_data[serial][inst].published = true;
-            
-            int task_id = (int)osThreadGetId();
-            for(int i = 0; i < UORB_MAX_SUB; ++i)
-            {
-                orb_data[serial][inst].authority_list[i] = -1;
-            }
-            
-            orb_sem_unlock(&orb_data[serial][inst]);
-        }
-    }
-    
-    return advert;
+	return uORB::Manager::get_instance()->orb_advertise_multi(meta, data, instance);
 }
 
 orb_advert_t orb_advertise_multi_queue(const struct orb_metadata *meta, const void *data, int *instance,
-				       int priority, unsigned int queue_size)
+				       unsigned int queue_size)
 {
-	return orb_advertise_multi(meta, data, instance, priority, queue_size);
+	return uORB::Manager::get_instance()->orb_advertise_multi(meta, data, instance, queue_size);
 }
 
-int orb_unadvertise(orb_advert_t &handle)
+int orb_unadvertise(orb_advert_t handle)
 {
-    handle = nullptr;
-    return 0;
+	return uORB::Manager::get_instance()->orb_unadvertise(handle);
 }
-
-int orb_publish_auto(const struct orb_metadata *meta, orb_advert_t *handle, const void *data, int *instance,
-		     int priority)
-{
-	if (*handle == nullptr) {
-                int serial = get_orb_serial(meta->o_name);
-                if(is_orb_multi(serial))
-                    *handle = orb_advertise_multi(meta, data, instance, priority);
-                else{
-                    *handle = orb_advertise(meta, data);
-                    if(instance)
-                        *instance = 0;
-                }
-
-		if (*handle != nullptr) {
-			return 0;
-		}
-
-	} else {
-		return orb_publish(meta, *handle, data);
-	}
-
-	return -1;
-}
-
 
 int  orb_publish(const struct orb_metadata *meta, orb_advert_t handle, const void *data)
 {
-    
-    int ret = -1;
-    int serial = get_orb_serial(meta->o_name);
-    
-    if(serial != -1)
-    {   
-        int instance = 0;
-
-        if(is_orb_multi(serial))
-        {
-            for(int i = 0; i < ORB_MULTI_MAX_INSTANCES; ++i)
-            {
-                if(handle == &orb_data[serial][i])
-                {
-                    instance = i;
-                    break;
-                }
-            }
-        }
-        
-        
-        //Not a queued publish
-        if(orb_data[serial][instance].queue == nullptr)
-        {
-            orb_sem_lock(&orb_data[serial][instance]);
-            
-            orb_data[serial][instance].published = false;
-            
-            int atomic_state = orb_lock();
-            
-            std::memcpy(orb_data[serial][instance].data, data, meta->o_size);
-            
-            orb_unlock(atomic_state);
-                
-            orb_data[serial][instance].serial = serial;
-                
-            ret = 0;
-                
-            orb_data[serial][instance].last_updated_time = hrt_absolute_time();
-            
-            orb_data[serial][instance].published = true;
-            
-            for(int i = 0; i < UORB_MAX_SUB; ++i)
-            {
-                orb_data[serial][instance].authority_list[i] = -1;
-            }
-            
-            for(int i = 0; i < UORB_MAX_POLL; ++i)
-            {
-                if(poll_queue[i].fd == (int)((serial << 4) | instance))
-                {
-                    orb_poll_notify(poll_queue[i].fd, POLLIN);
-                    break;
-                }
-            }
-            
-            orb_sem_unlock(&orb_data[serial][instance]);
-        }
-        //We have a queued multi publish
-        else
-        {    
-            orb_sem_lock(&orb_data[serial][instance]);
-            
-            if(orb_data[serial][instance].queue->get(orb_data[serial][instance].data, meta->o_size))
-            {   
-                orb_data[serial][instance].published = false;
-                
-                orb_data[serial][instance].serial = serial;
-                
-                ret = 0;
-                
-                orb_data[serial][instance].last_updated_time = hrt_absolute_time();
-                
-                orb_data[serial][instance].published = true;
-                
-                for(int i = 0; i < UORB_MAX_SUB; ++i)
-                {
-                    orb_data[serial][instance].authority_list[i] = -1;
-                }
-                
-                for(int i = 0; i < UORB_MAX_POLL; ++i)
-                {
-                    if(poll_queue[i].fd == (int)((serial << 4) | instance))
-                    {
-                        orb_poll_notify(poll_queue[i].fd, POLLIN);
-                        break;
-                    }
-                }
-                        
-                orb_data[serial][instance].queue->put(data, meta->o_size);
-            }
-            else
-                ret = -1;
-            orb_sem_unlock(&orb_data[serial][instance]);
-        }
-    }
-    
-    return ret;
+	return uORB::Manager::get_instance()->orb_publish(meta, handle, data);
 }
 
 int  orb_subscribe(const struct orb_metadata *meta)
 {
-    if(meta == nullptr || meta->o_name == nullptr)
-        return -1;
-    
-    int serial = get_orb_serial(meta->o_name);
-    
-    int ret = -1;
-    
-    if(serial >= 0 && serial < total_uorb_num)
-    {
-        int instance = 0;
-        if(is_orb_multi(serial))
-        {
-            instance = ORB_MULTI_MAX_INSTANCES - 1;
-        }
-        
-        int task_id = (int)osThreadGetId();
-        
-        int atomic_state = orb_lock();
-        
-        for(int i = 0; i < UORB_MAX_SUB; ++i)
-        {
-            if(orb_data[serial][instance].registered_list[i] == task_id)
-            {
-                ret = (int)((serial << 4) | (instance));
-                break;
-            }
-            
-            if(orb_data[serial][instance].registered_list[i] == -1)
-            {
-                orb_data[serial][instance].registered_list[i] = task_id;
-                ret = (int)((serial << 4) | (instance));
-                break;
-            }
-        }
-        
-        orb_unlock(atomic_state);
-    }
-
-    return ret;
+	return uORB::Manager::get_instance()->orb_subscribe(meta);
 }
 
 int  orb_subscribe_multi(const struct orb_metadata *meta, unsigned instance)
 {
-    if(meta == nullptr || meta->o_name == nullptr)
-        return -1;
-    
-    int serial = get_orb_serial(meta->o_name);
-    
-    int ret = -1;
-    if(serial >= 0 && serial < total_uorb_num && is_orb_multi(serial))
-    {
-        int task_id = (int)osThreadGetId();
-        
-        int atomic_state = orb_lock();
-        
-        for(int i = 0; i < UORB_MAX_SUB; ++i)
-        {
-            if(orb_data[serial][instance].registered_list[i] == task_id)
-            {
-                ret = (int)((serial << 4) | (instance));
-                break;
-            }
-            
-            if(orb_data[serial][instance].registered_list[i] == -1)
-            {
-                orb_data[serial][instance].registered_list[i] = task_id;
-                ret = (int)((serial << 4) | (instance));
-                break;
-            }
-        }
-        
-        orb_unlock(atomic_state);
-    }
-    
-    return ret;
+	return uORB::Manager::get_instance()->orb_subscribe_multi(meta, instance);
 }
 
 int  orb_unsubscribe(int handle)
 {
-    if(handle < 0)
-    {
-        return -1;
-    }
-    
-    int serial = (handle >> 4);
-    
-    int instance = 0;
-    if(is_orb_multi(serial))
-    {
-        instance = ORB_MULTI_MAX_INSTANCES - 1;
-    }
-    
-    if(serial >= 0 && serial < total_uorb_num)
-    {   
-        int task_id = (int)osThreadGetId();
-        
-        int atomic_state = orb_lock();
-        for(int i = 0; i < UORB_MAX_SUB; ++i)
-        {
-            if(orb_data[serial][instance].registered_list[i] == task_id)
-            {
-                orb_data[serial][instance].registered_list[i] = -1;
-                orb_unlock(atomic_state);
-                return 0;
-            }
-        }
-        orb_unlock(atomic_state);
-    }
-    else
-    {
-        return -1;
-    }
-    
-    return 0;
+	return uORB::Manager::get_instance()->orb_unsubscribe(handle);
 }
 
 int  orb_copy(const struct orb_metadata *meta, int handle, void *buffer)
-{   
-    int ret = -1;
-    int serial = get_orb_serial(meta->o_name);
-    if(serial != -1 && serial == (handle >> 4))
-    {   
-        int instance = handle - ((handle >> 4) << 4);
-        
-        orb_sem_lock(&orb_data[serial][instance]);
-        
-        if(instance > 0 && !is_orb_multi(serial))
-        {
-            ret = -1;
-            
-            orb_sem_unlock(&orb_data[serial][instance]);
-            return ret;
-        }
-        
-        else if(instance >= 0 && instance < ORB_MULTI_MAX_INSTANCES && 
-           orb_data[serial][instance].data != nullptr)
-        {
-            bool authorised = false;
-            int task_id = (int)osThreadGetId();
-                
-            for(int i = 0; i < UORB_MAX_SUB; ++i)
-            {
-                if(orb_data[serial][instance].authority_list[i] == -1)
-                {
-                    orb_data[serial][instance].authority_list[i] = task_id;
-                    authorised = true;
-                    break;
-                }
-            }
-            
-            if(authorised)
-            {
-                int atomic_state = orb_lock();
-            
-                std::memcpy(buffer, orb_data[serial][instance].data, meta->o_size);
-            
-                orb_unlock(atomic_state);
-            
-                ret = 0;
-            }
-            
-            int registered_len = 0,authority_len = 0;
-            for(int i = 0;i < UORB_MAX_SUB; ++i)
-            {
-                if(orb_data[serial][instance].registered_list[i] != -1)
-                    ++registered_len;
-                if(orb_data[serial][instance].authority_list[i] != -1)
-                    ++authority_len;
-            }
-            
-            if(authority_len >= registered_len)
-                orb_data[serial][instance].published = false;
-        }
-        
-        orb_sem_unlock(&orb_data[serial][instance]);
-    }
-    
-    return ret;
+{
+	return uORB::Manager::get_instance()->orb_copy(meta, handle, buffer);
 }
-
 
 int  orb_check(int handle, bool *updated)
 {
-    if(handle < 0)
-    {
-        *updated = false;
-        return -1;
-    }
-    
-    int serial = (handle >> 4);
-    int instance = handle - ((handle >> 4) << 4);
-    
-    if(serial < 0 || serial >= total_uorb_num ||
-       instance < 0 || instance >= ORB_MULTI_MAX_INSTANCES)
-    {
-        *updated = false;
-        return -1;
-    }
-    
-    orb_sem_lock(&orb_data[serial][instance]);
-    
-    bool authorised = false;
-    int task_id = (int)osThreadGetId();
-    
-    for(int i = 0; i < UORB_MAX_SUB; ++i)
-    {
-        if(orb_data[serial][instance].authority_list[i] == task_id)
-        {
-            authorised = true;
-            break;
-        }
-    }
-    
-    if(orb_data[serial][instance].published && !authorised)
-    {
-        *updated = true;
-        
-        orb_sem_unlock(&orb_data[serial][instance]);
-        
-        return 0;
-    }
-    else
-        *updated = false;
-    
-    orb_sem_unlock(&orb_data[serial][instance]);
-    
-    return -1;
-}
-
-int  orb_stat(int handle, uint64_t *time)
-{   
-    int serial = (handle >> 4);
-    int instance = handle - ((handle >> 4) << 4);
-    
-    if(serial >= 0 && serial < total_uorb_num &&
-       instance>= 0 && instance <ORB_MULTI_MAX_INSTANCES)
-    {
-        *time = orb_data[serial][instance].last_updated_time;
-        
-        return 0;
-    }
-    
-    return -1;
+	return uORB::Manager::get_instance()->orb_check(handle, updated);
 }
 
 int  orb_exists(const struct orb_metadata *meta, int instance)
 {
-    int serial = get_orb_serial(meta->o_name);
-    if(serial < 0 || serial >= total_uorb_num)
-        return -1;
-    if(!is_orb_multi(serial) && instance > 0)
-        return -1;
-    
-    if((orb_data[serial][instance].data) != nullptr && 
-       (orb_data[serial][instance].serial) != -1)
-    {
-        return 0;
-    }
-    
-    return -1;
+	return uORB::Manager::get_instance()->orb_exists(meta, instance);
 }
 
 int  orb_group_count(const struct orb_metadata *meta)
 {
 	unsigned instance = 0;
 
-        for(int i = 0; i < ORB_MULTI_MAX_INSTANCES; ++i)
-        {
-            if(orb_exists(meta, i) == 0)
-                ++instance;
-        }
+	while (uORB::Manager::get_instance()->orb_exists(meta, instance) == OK) {
+		++instance;
+	};
 
 	return instance;
 }
 
-int  orb_priority(int handle, int32_t *priority)
-{
-    int serial = (handle >> 4);
-    int instance = handle - ((handle >> 4) << 4);
-    
-    if(serial >=0 && serial < total_uorb_num &&
-       instance >=0 && instance < ORB_MULTI_MAX_INSTANCES)
-    {
-        *priority = orb_data[serial][instance].priority;
-        return 0;
-    }
-    return -1;
-}
-
 int orb_set_interval(int handle, unsigned interval)
 {
-    int serial = (handle >> 4);
-    int instance = handle - ((handle >> 4) << 4);
-    
-    if(serial >= 0 && serial < total_uorb_num &&
-       instance >= 0 && instance < ORB_MULTI_MAX_INSTANCES)
-    {
-        orb_data[serial][instance].interval = interval;
-        return 0;
-    }
-    return -1;
+	return uORB::Manager::get_instance()->orb_set_interval(handle, interval);
 }
 
 int orb_get_interval(int handle, unsigned *interval)
 {
-    int serial = (handle >> 4);
-    int instance = handle - ((handle >> 4) << 4);
-    
-    if(serial >=0 && serial < total_uorb_num &&
-       instance >=0 && instance < ORB_MULTI_MAX_INSTANCES)
-    {
-        *interval = orb_data[serial][instance].interval;
-        return 0;
-    }
-    return -1;
+	return uORB::Manager::get_instance()->orb_get_interval(handle, interval);
 }
 
-//just POLLIN
-int orb_poll(struct pollfd *fds, nfds_t nfds, int timeout)      //timeout: ms
+const char *orb_get_c_type(unsigned char short_type)
 {
-    int ret[5];
-    
-    std::memset(ret, -1, nfds * sizeof(int));
-    
-    for(int i = 0; i < nfds; ++i)
-    {
-        if(fds[i].fd < 0)
-            continue;
-        
-        bool registered = false;
-        pollevent_t *revents_ptr = nullptr;
-        int *fd_ptr = nullptr;
-        
-        fds[i].id = osThreadGetId();
-        fds[i].sem = nullptr;
-        fds[i].revents = 0;
-        
-        for(int j = 0; j < UORB_MAX_POLL; ++j)
-        {
-            if(fds[i].fd == poll_queue[j].fd && 
-               fds[i].events == poll_queue[j].events &&
-               fds[i].id == poll_queue[j].id)
-            {
-                fds[i].sem = poll_queue[j].sem;
-                revents_ptr = &poll_queue[j].revents;
-                fd_ptr = &poll_queue[j].fd;
-                registered = true;
-                break;
-            }
-        }
-        
-        if(!registered)
-        {
-            for(int j = 0; j < UORB_MAX_POLL; ++j)
-            {
-                if(poll_queue[j].fd == -1)
-                {
-                    poll_queue[j].fd = fds[i].fd;
-                    poll_queue[j].id = fds[i].id;
-                    poll_queue[j].events = fds[i].events;
-                    fds[i].sem = poll_queue[j].sem;
-                    revents_ptr = &poll_queue[j].revents;
-                    fd_ptr = &poll_queue[j].fd;
-                    registered = true;
-                    break;
-                }
-            }
-        }
-        
-        if(registered && fds[i].sem)
-        {
-            int res = osSemaphoreWait(fds[i].sem, (uint32_t)(((float)(configTICK_RATE_HZ / 1000 * timeout)) / ((float)nfds)));
+	// this matches with the uorb o_fields generator
+	switch (short_type) {
+	case 0x82: return "int8_t";
 
-            if(res == osOK){
-                ret[i] = 1;
-                
-                if(fd_ptr)
-                {
-                    *fd_ptr = -1;
-                }
-                
-                if(revents_ptr)
-                {
-                    fds[i].revents = *revents_ptr;
-                    *revents_ptr = 0;
-                }
-            }
-            else{
-                ret[i] = 0;
-                fds[i].revents = 0;
-                if(revents_ptr)
-                {
-                    *revents_ptr = 0;
-                }
-            }
-        }
-    }
-    
-    int final = nfds;
-    
-    for(int i = 0; i < nfds; ++i)
-    {
-        if(ret[i] == -1 || ret[i] == 0)
-        {
-            --final;
-        }
-    }
-    
-    return final;
-}
+	case 0x83: return "int16_t";
 
-void orb_poll_notify(int fd, pollevent_t events)
-{
-    int atomic_state = orb_lock();
-    
-    for(int i = 0; i < UORB_MAX_POLL; ++i)
-    {
-        if(poll_queue[i].fd == fd && poll_queue[i].sem)
-        {
-            osSemaphoreRelease(poll_queue[i].sem);
-            poll_queue[i].revents = events;
-        }
-    }
-    
-    orb_unlock(atomic_state);
+	case 0x84: return "int32_t";
+
+	case 0x85: return "int64_t";
+
+	case 0x86: return "uint8_t";
+
+	case 0x87: return "uint16_t";
+
+	case 0x88: return "uint32_t";
+
+	case 0x89: return "uint64_t";
+
+	case 0x8a: return "float";
+
+	case 0x8b: return "double";
+
+	case 0x8c: return "bool";
+
+	case 0x8d: return "char";
+	}
+
+	return nullptr;
 }
 
 
-void orb_init(void)
+void orb_print_message_internal(const orb_metadata *meta, const void *data, bool print_topic_name)
 {
-    orb_in_os = false;
-    
-    for(int i = 0; i < UORB_MAX_POLL; ++i)
-    {
-        poll_queue[i].fd = -1;
-        poll_queue[i].id = 0;
-        
-        osSemaphoreDef(ORB_POLL_SEM);
-        poll_queue[i].sem = osSemaphoreCreate(osSemaphore(ORB_POLL_SEM), 1);
-        
-        poll_queue[i].revents = 0;
-        osSemaphoreWait(poll_queue[i].sem, 0xFFFFFFFF);
-    }
-    
-    for(int i = 0; i < total_uorb_num; ++i)
-    {
-        if(is_orb_multi(i))
-        {
-#ifndef USE_UORB_CCMRAM
-            orb_data[i] = new ORBData[ORB_MULTI_MAX_INSTANCES];
-#else
-            orb_data[i] = (ORBData*)_ccmram.uORBDataCalloc(sizeof(ORBData) * ORB_MULTI_MAX_INSTANCES, 1);
-#endif            
+	if (print_topic_name) {
+		PX4_INFO_RAW(" %s\n", meta->o_name);
+	}
 
-            for(int j = 0; j < ORB_MULTI_MAX_INSTANCES; ++j)
-            {
-                orb_data[i][j].data = nullptr; 
-                orb_data[i][j].priority = (ORB_PRIO)get_priority(j);
-                orb_data[i][j].serial = -1;
-                orb_data[i][j].interval = 0;
-                orb_data[i][j].queue = nullptr;
-                orb_data[i][j].published = false;
-                
-                osSemaphoreDef(ORB_SEM);
-                orb_data[i][j].sem = osSemaphoreCreate(osSemaphore(ORB_SEM), 1);
-                orb_data[i][j].sem_taken = false;
-                
-                orb_data[i][j].last_updated_time = 0;
-                
-                orb_data[i][j].registered_list = new int32_t[UORB_MAX_SUB];
-                orb_data[i][j].authority_list = new int32_t[UORB_MAX_SUB];
-                
-                for(int k = 0; k < UORB_MAX_SUB; ++k)
-                {
-                    orb_data[i][j].registered_list[k] = -1;
-                    orb_data[i][j].authority_list[k] = -1;
-                }
-            }
-        }
-        else
-        {
-#ifndef USE_UORB_CCMRAM
-            orb_data[i] = new ORBData;
-#else
-            orb_data[i] = (ORBData*)_ccmram.uORBDataCalloc(sizeof(ORBData), 1);
-#endif
+	const hrt_abstime now = hrt_absolute_time();
+	hrt_abstime topic_timestamp = 0;
 
-            orb_data[i]->data = nullptr;
-            orb_data[i]->priority = ORB_PRIO_DEFAULT;
-            orb_data[i]->serial = -1;
-            orb_data[i]->interval = 0;
-            orb_data[i]->queue = nullptr;
-            orb_data[i]->published = false;
-            
-            osSemaphoreDef(ORB_SEM);
-            orb_data[i]->sem = osSemaphoreCreate(osSemaphore(ORB_SEM), 1);
-            orb_data[i]->sem_taken = false;
-            
-            orb_data[i]->last_updated_time = 0;
-            
-            orb_data[i]->registered_list = new int32_t[UORB_MAX_SUB];
-            orb_data[i]->authority_list = new int32_t[UORB_MAX_SUB];
+	const uint8_t *data_ptr = (const uint8_t *)data;
+	int data_offset = 0;
 
-            for(int k = 0; k < UORB_MAX_SUB; ++k)
-            {
-                orb_data[i]->registered_list[k] = -1;
-                orb_data[i]->authority_list[k] = -1;
-            }
-        }
-    }
+	for (int format_idx = 0; meta->o_fields[format_idx] != 0;) {
+		const char *end_field = strchr(meta->o_fields + format_idx, ';');
+
+		if (!end_field) {
+			PX4_ERR("Format error in %s", meta->o_fields);
+			return;
+		}
+
+		const char *c_type = orb_get_c_type(meta->o_fields[format_idx]);
+		const int end_field_idx = end_field - meta->o_fields;
+
+		int array_idx = -1;
+		int field_name_idx = -1;
+
+		for (int field_idx = format_idx; field_idx != end_field_idx; ++field_idx) {
+			if (meta->o_fields[field_idx] == '[') {
+				array_idx = field_idx + 1;
+
+			} else if (meta->o_fields[field_idx] == ' ') {
+				field_name_idx = field_idx + 1;
+				break;
+			}
+		}
+
+		int array_size = 1;
+
+		if (array_idx >= 0) {
+			array_size = strtol(meta->o_fields + array_idx, nullptr, 10);
+		}
+
+		char field_name[80];
+		size_t field_name_len = end_field_idx - field_name_idx;
+
+		if (field_name_len >= sizeof(field_name)) {
+			PX4_ERR("field name too long %s (max: %u)", meta->o_fields, (unsigned)sizeof(field_name));
+			return;
+		}
+
+		memcpy(field_name, meta->o_fields + field_name_idx, field_name_len);
+		field_name[field_name_len] = '\0';
+
+		if (c_type) { // built-in type
+			bool dont_print = false;
+
+			// handle special cases
+			if (strncmp(field_name, "_padding", 8) == 0) {
+				dont_print = true;
+
+			} else if (strcmp(c_type, "char") == 0 && array_size > 1) { // string
+				PX4_INFO_RAW("    %s: \"%.*s\"\n", field_name, array_size, (char *)(data_ptr + data_offset));
+				dont_print = true;
+			}
+
+			if (!dont_print) {
+				PX4_INFO_RAW("    %s: ", field_name);
+			}
+
+			if (!dont_print && array_size > 1) {
+				PX4_INFO_RAW("[");
+			}
+
+			const int previous_data_offset = data_offset;
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-align" // the caller ensures data is aligned
+
+			for (int i = 0; i < array_size; ++i) {
+				if (strcmp(c_type, "int8_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIi8, *(int8_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(int8_t);
+
+				} else if (strcmp(c_type, "int16_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIi16, *(int16_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(int16_t);
+
+				} else if (strcmp(c_type, "int32_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIi32, *(int32_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(int32_t);
+
+				} else if (strcmp(c_type, "int64_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIi64, *(int64_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(int64_t);
+
+				} else if (strcmp(c_type, "uint8_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIu8, *(uint8_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(uint8_t);
+
+				} else if (strcmp(c_type, "uint16_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIu16, *(uint16_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(uint16_t);
+
+				} else if (strcmp(c_type, "uint32_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIu32, *(uint32_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(uint32_t);
+
+				} else if (strcmp(c_type, "uint64_t") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%" PRIu64, *(uint64_t *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(uint64_t);
+
+				} else if (strcmp(c_type, "float") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%.4f", (double) * (float *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(float);
+
+				} else if (strcmp(c_type, "double") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%.4f", *(double *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(double);
+
+				} else if (strcmp(c_type, "bool") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%s", *(bool *)(data_ptr + data_offset) ? "True" : "False"); }
+
+					data_offset += sizeof(bool);
+
+				} else if (strcmp(c_type, "char") == 0) {
+					if (!dont_print) { PX4_INFO_RAW("%i", (int) * (char *)(data_ptr + data_offset)); }
+
+					data_offset += sizeof(char);
+
+				} else {
+					PX4_ERR("unknown type: %s", c_type);
+					return;
+				}
+
+				if (!dont_print && i < array_size - 1) {
+					PX4_INFO_RAW(", ");
+				}
+			}
+
+			if (!dont_print && array_size > 1) {
+				PX4_INFO_RAW("]");
+			}
+
+			// handle special cases
+			if (array_size == 1) {
+				if (strcmp(c_type, "uint64_t") == 0 && strcmp(field_name, "timestamp") == 0) {
+					topic_timestamp = *(uint64_t *)(data_ptr + previous_data_offset);
+
+					if (topic_timestamp != 0) {
+						PX4_INFO_RAW(" (%.6f seconds ago)", (double)((now - topic_timestamp) / 1e6f));
+					}
+
+				} else if (strcmp(c_type, "uint64_t") == 0 && strcmp(field_name, "timestamp_sample") == 0) {
+					hrt_abstime timestamp = *(uint64_t *)(data_ptr + previous_data_offset);
+
+					if (topic_timestamp != 0 && timestamp != 0) {
+						PX4_INFO_RAW(" (%i us before timestamp)", (int)(topic_timestamp - timestamp));
+					}
+
+				} else if (strstr(field_name, "flags") != nullptr) {
+					// bitfield
+					unsigned field_size = 0;
+					unsigned long value = 0;
+
+					if (strcmp(c_type, "uint8_t") == 0) {
+						field_size = sizeof(uint8_t);
+						value = *(uint8_t *)(data_ptr + previous_data_offset);
+
+					} else if (strcmp(c_type, "uint16_t") == 0) {
+						field_size = sizeof(uint16_t);
+						value = *(uint16_t *)(data_ptr + previous_data_offset);
+
+					} else if (strcmp(c_type, "uint32_t") == 0) {
+						field_size = sizeof(uint32_t);
+						value = *(uint32_t *)(data_ptr + previous_data_offset);
+					}
+
+					if (field_size > 0) {
+						PX4_INFO_RAW(" (0b");
+
+						for (int i = (field_size * 8) - 1; i >= 0; i--) {
+							PX4_INFO_RAW("%lu%s", (value >> i) & 1, ((unsigned)i < (field_size * 8) - 1 && i % 4 == 0 && i > 0) ? "'" : "");
+						}
+
+						PX4_INFO_RAW(")");
+					}
+
+				} else if (strcmp(c_type, "uint32_t") == 0 && strstr(field_name, "device_id") != nullptr) {
+					// Device ID
+					uint32_t device_id = *(uint32_t *)(data_ptr + previous_data_offset);
+					char device_id_buffer[80];
+					device::Device::device_id_print_buffer(device_id_buffer, sizeof(device_id_buffer), device_id);
+					PX4_INFO_RAW(" (%s)", device_id_buffer);
+				}
+
+			} else if (array_size == 4 && strcmp(c_type, "float") == 0 && (strcmp(field_name, "q") == 0
+					|| strncmp(field_name, "q_", 2) == 0)) {
+				// attitude
+				float *attitude = (float *)(data_ptr + previous_data_offset);
+				matrix::Eulerf euler{matrix::Quatf{attitude}};
+				PX4_INFO_RAW(" (Roll: %.1f deg, Pitch: %.1f deg, Yaw: %.1f deg)",
+					     (double)math::degrees(euler(0)), (double)math::degrees(euler(1)), (double)math::degrees(euler(2)));
+			}
+
+#pragma GCC diagnostic pop
+
+			PX4_INFO_RAW("\n");
+
+		} else {
+
+			// extract the topic name
+			char topic_name[80];
+			const size_t topic_name_len = array_size > 1 ? array_idx - format_idx - 1 : field_name_idx - format_idx - 1;
+
+			if (topic_name_len >= sizeof(topic_name)) {
+				PX4_ERR("topic name too long in %s (max: %u)", meta->o_name, (unsigned)sizeof(topic_name));
+				return;
+			}
+
+			memcpy(topic_name, meta->o_fields + format_idx, topic_name_len);
+			field_name[topic_name_len] = '\0';
+
+			// find the metadata
+			const orb_metadata *const *topics = orb_get_topics();
+			const orb_metadata *found_topic = nullptr;
+
+			for (size_t i = 0; i < orb_topics_count(); i++) {
+				if (strcmp(topics[i]->o_name, topic_name) == 0) {
+					found_topic = topics[i];
+					break;
+				}
+			}
+
+			if (!found_topic) {
+				PX4_ERR("Topic %s did not match any known topics", topic_name);
+				return;
+			}
+
+			// print recursively
+			for (int i = 0; i < array_size; ++i) {
+				PX4_INFO_RAW("  %s", field_name);
+
+				if (array_size > 1) {
+					PX4_INFO_RAW("[%i]", i);
+				}
+
+				PX4_INFO_RAW(" (%s):\n", topic_name);
+				orb_print_message_internal(found_topic, data_ptr + data_offset, false);
+				data_offset += found_topic->o_size;
+			}
+		}
+
+		format_idx = end_field_idx + 1;
+	}
 }

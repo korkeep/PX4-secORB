@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2019 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2012-2015 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,82 +31,23 @@
  *
  ****************************************************************************/
 
-/**
- * @file Subscription.cpp
- *
- */
+#ifndef _uORBCommon_hpp_
+#define _uORBCommon_hpp_
 
-#include "Subscription.hpp"
-#include <px4_platform_common/defines.h>
+#include <drivers/drv_orb_dev.h>
+#include <systemlib/err.h>
+#include "uORB.h"
+#include <drivers/drv_hrt.h>
+
 
 namespace uORB
 {
+static constexpr unsigned orb_maxpath = 64;
 
-bool Subscription::subscribe()
-{
-	// check if already subscribed
-	if (_node != nullptr) {
-		return true;
-	}
+struct orb_advertdata {
+	const struct orb_metadata *meta;
+	int *instance;
+};
 
-	if ((_orb_id != ORB_ID::INVALID) && uORB::Manager::get_instance()) {
-		DeviceMaster *device_master = uORB::Manager::get_instance()->get_device_master();
-
-		if (device_master != nullptr) {
-
-			if (!device_master->deviceNodeExists(_orb_id, _instance)) {
-				return false;
-			}
-
-			uORB::DeviceNode *node = device_master->getDeviceNode(get_topic(), _instance);
-
-			if (node != nullptr) {
-				_node = node;
-				_node->add_internal_subscriber();
-
-				_last_generation = _node->get_initial_generation();
-
-				return true;
-			}
-		}
-	}
-
-	return false;
 }
-
-void Subscription::unsubscribe()
-{
-	if (_node != nullptr) {
-		_node->remove_internal_subscriber();
-	}
-
-	_node = nullptr;
-	_last_generation = 0;
-}
-
-bool Subscription::ChangeInstance(uint8_t instance)
-{
-	if (instance != _instance) {
-		DeviceMaster *device_master = uORB::Manager::get_instance()->get_device_master();
-
-		if (device_master != nullptr) {
-			if (!device_master->deviceNodeExists(_orb_id, instance)) {
-				return false;
-			}
-
-			// if desired new instance exists, unsubscribe from current
-			unsubscribe();
-			_instance = instance;
-			subscribe();
-			return true;
-		}
-
-	} else {
-		// already on desired index
-		return true;
-	}
-
-	return false;
-}
-
-} // namespace uORB
+#endif // _uORBCommon_hpp_

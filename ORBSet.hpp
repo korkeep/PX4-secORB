@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (c) 2012-2019 PX4 Development Team. All rights reserved.
+ *   Copyright (c) 2015 Mark Charlebois. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,82 +31,115 @@
  *
  ****************************************************************************/
 
-/**
- * @file Subscription.cpp
- *
- */
+#pragma once
 
-#include "Subscription.hpp"
-#include <px4_platform_common/defines.h>
-
-namespace uORB
+class ORBSet
 {
+public:
+	struct Node {
+		struct Node *next;
+		const char *node_name;
+	};
 
-bool Subscription::subscribe()
-{
-	// check if already subscribed
-	if (_node != nullptr) {
-		return true;
-	}
+	ORBSet() :
+		_top(nullptr),
+		_end(nullptr)
+	{ }
+	~ORBSet()
+	{
+		while (_top != nullptr) {
+			unlinkNext(_top);
 
-	if ((_orb_id != ORB_ID::INVALID) && uORB::Manager::get_instance()) {
-		DeviceMaster *device_master = uORB::Manager::get_instance()->get_device_master();
-
-		if (device_master != nullptr) {
-
-			if (!device_master->deviceNodeExists(_orb_id, _instance)) {
-				return false;
-			}
-
-			uORB::DeviceNode *node = device_master->getDeviceNode(get_topic(), _instance);
-
-			if (node != nullptr) {
-				_node = node;
-				_node->add_internal_subscriber();
-
-				_last_generation = _node->get_initial_generation();
-
-				return true;
+			if (_top->next == nullptr) {
+				free((void *)_top->node_name);
+				free(_top);
+				_top = nullptr;
 			}
 		}
 	}
+	void insert(const char *node_name)
+	{
+		Node **p;
 
-	return false;
-}
+		if (_top == nullptr) {
+			p = &_top;
 
-void Subscription::unsubscribe()
-{
-	if (_node != nullptr) {
-		_node->remove_internal_subscriber();
+		} else {
+			p = &_end->next;
+		}
+
+		*p = (Node *)malloc(sizeof(Node));
+
+		if (_end) {
+			_end = _end->next;
+
+		} else {
+			_end = _top;
+		}
+
+		_end->next = nullptr;
+		_end->node_name = strdup(node_name);
 	}
 
-	_node = nullptr;
-	_last_generation = 0;
-}
+	bool find(const char *node_name)
+	{
+		Node *p = _top;
 
-bool Subscription::ChangeInstance(uint8_t instance)
-{
-	if (instance != _instance) {
-		DeviceMaster *device_master = uORB::Manager::get_instance()->get_device_master();
-
-		if (device_master != nullptr) {
-			if (!device_master->deviceNodeExists(_orb_id, instance)) {
-				return false;
+		while (p) {
+			if (strcmp(p->node_name, node_name) == 0) {
+				return true;
 			}
 
-			// if desired new instance exists, unsubscribe from current
-			unsubscribe();
-			_instance = instance;
-			subscribe();
+			p = p->next;
+		}
+
+		return false;
+	}
+
+	bool erase(const char *node_name)
+	{
+		Node *p = _top;
+
+		if (_top && (strcmp(_top->node_name, node_name) == 0)) {
+			p = _top->next;
+			free((void *)_top->node_name);
+			free(_top);
+			_top = p;
+
+			if (_top == nullptr) {
+				_end = nullptr;
+			}
+
 			return true;
 		}
 
-	} else {
-		// already on desired index
-		return true;
+		while (p->next) {
+			if (strcmp(p->next->node_name, node_name) == 0) {
+				unlinkNext(p);
+				return true;
+			}
+		}
+
+		return false;
 	}
 
-	return false;
-}
+private:
 
-} // namespace uORB
+	void unlinkNext(Node *a)
+	{
+		Node *b = a->next;
+
+		if (b != nullptr) {
+			if (_end == b) {
+				_end = a;
+			}
+
+			a->next = b->next;
+			free((void *)b->node_name);
+			free(b);
+		}
+	}
+
+	Node *_top;
+	Node *_end;
+};
