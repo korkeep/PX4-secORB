@@ -273,13 +273,15 @@ int uORB::Manager::orb_subscribe(struct orb_metadata *meta)
 		secORB_auth(mac, (unsigned char *)meta->o_name, meta->o_size, key);
 		//PX4_ERR("key: %s", key);
 		//PX4_ERR("mac: %s", mac);
+
+		// secORB: Verify generated MAC
+		if(secORB_verify(meta->mac, mac))
+			return node_open(meta, false);
+		else
+			return -1;
 	}
-	
-	// secORB: Verify generated MAC
-	if(secORB_verify(meta->mac, mac))
-		return node_open(meta, false);
-	else
-		return -1;
+
+	return node_open(meta, false);
 }
 
 int uORB::Manager::orb_subscribe_multi(struct orb_metadata *meta, unsigned instance)
