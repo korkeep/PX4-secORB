@@ -74,7 +74,8 @@ public:
 
 	bool unadvertise() { return (DeviceNode::unadvertise(_handle) == PX4_OK); }
 
-	orb_id_t get_topic() const { return get_orb_meta(_orb_id); }
+	// secORB: Add MAC to uORB Message
+	orb_id_t get_topic() { return get_orb_meta(_orb_id); }
 
 protected:
 

@@ -80,7 +80,8 @@ static inline uint8_t round_pow_of_two_8(uint8_t n)
 	return value + 1;
 }
 
-uORB::DeviceNode::DeviceNode(const struct orb_metadata *meta, const uint8_t instance, const char *path,
+// secORB: Add MAC to uORB Message
+uORB::DeviceNode::DeviceNode(struct orb_metadata *meta, const uint8_t instance, const char *path,
 			     uint8_t queue_size) :
 	CDev(path),
 	_meta(meta),

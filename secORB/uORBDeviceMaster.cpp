@@ -59,7 +59,7 @@ uORB::DeviceMaster::~DeviceMaster()
 	px4_sem_destroy(&_lock);
 }
 
-int uORB::DeviceMaster::advertise(const struct orb_metadata *meta, bool is_advertiser, int *instance)
+int uORB::DeviceMaster::advertise(struct orb_metadata *meta, bool is_advertiser, int *instance)
 {
 	int ret = PX4_ERROR;
 
@@ -468,7 +468,7 @@ bool uORB::DeviceMaster::deviceNodeExists(ORB_ID id, const uint8_t instance)
 	return _node_exists[instance][(uint8_t)id];
 }
 
-uORB::DeviceNode *uORB::DeviceMaster::getDeviceNode(const struct orb_metadata *meta, const uint8_t instance)
+uORB::DeviceNode *uORB::DeviceMaster::getDeviceNode(struct orb_metadata *meta, const uint8_t instance)
 {
 	if (meta == nullptr) {
 		return nullptr;
@@ -487,7 +487,7 @@ uORB::DeviceNode *uORB::DeviceMaster::getDeviceNode(const struct orb_metadata *m
 	return node;
 }
 
-uORB::DeviceNode *uORB::DeviceMaster::getDeviceNodeLocked(const struct orb_metadata *meta, const uint8_t instance)
+uORB::DeviceNode *uORB::DeviceMaster::getDeviceNodeLocked(struct orb_metadata *meta, const uint8_t instance)
 {
 	for (uORB::DeviceNode *node : _node_list) {
 		if ((strcmp(node->get_name(), meta->o_name) == 0) && (node->get_instance() == instance)) {

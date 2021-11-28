@@ -96,6 +96,7 @@ public:
 	 */
 	uORB::DeviceMaster *get_device_master();
 
+	// secORB: Add MAC to uORB Message
 	// ==== uORB interface methods ====
 	/**
 	 * Advertise as the publisher of a topic.
@@ -121,11 +122,12 @@ public:
 	 *      ORB_DEFINE with no corresponding ORB_DECLARE)
 	 *      this function will return nullptr and set errno to ENOENT.
 	 */
-	orb_advert_t orb_advertise(const struct orb_metadata *meta, const void *data, unsigned int queue_size = 1)
+	orb_advert_t orb_advertise(struct orb_metadata *meta, const void *data, unsigned int queue_size = 1)
 	{
 		return orb_advertise_multi(meta, data, nullptr, queue_size);
 	}
 
+	// secORB: Add MAC to uORB Message
 	/**
 	 * Advertise as the publisher of a topic.
 	 *
@@ -156,7 +158,7 @@ public:
 	 *      ORB_DEFINE with no corresponding ORB_DECLARE)
 	 *      this function will return -1 and set errno to ENOENT.
 	 */
-	orb_advert_t orb_advertise_multi(const struct orb_metadata *meta, const void *data, int *instance,
+	orb_advert_t orb_advertise_multi(struct orb_metadata *meta, const void *data, int *instance,
 					 unsigned int queue_size = 1);
 
 	/**
@@ -167,6 +169,7 @@ public:
 	 */
 	int orb_unadvertise(orb_advert_t handle);
 
+	// secORB: Add MAC to uORB Message
 	/**
 	 * Publish new data to a topic.
 	 *
@@ -180,7 +183,7 @@ public:
 	 * @param data    A pointer to the data to be published.
 	 * @return    OK on success, PX4_ERROR otherwise with errno set accordingly.
 	 */
-	int  orb_publish(const struct orb_metadata *meta, orb_advert_t handle, const void *data);
+	int  orb_publish(struct orb_metadata *meta, orb_advert_t handle, const void *data);
 
 	/**
 	 * Subscribe to a topic.
@@ -210,7 +213,7 @@ public:
 	 * @return    PX4_ERROR on error, otherwise returns a handle
 	 *      that can be used to read and update the topic.
 	 */
-	int  orb_subscribe(const struct orb_metadata *meta);
+	int  orb_subscribe(struct orb_metadata *meta);
 
 	/**
 	 * Subscribe to a multi-instance of a topic.
@@ -248,7 +251,7 @@ public:
 	 *      ORB_DEFINE_OPTIONAL with no corresponding ORB_DECLARE)
 	 *      this function will return -1 and set errno to ENOENT.
 	 */
-	int  orb_subscribe_multi(const struct orb_metadata *meta, unsigned instance);
+	int  orb_subscribe_multi(struct orb_metadata *meta, unsigned instance);
 
 	/**
 	 * Unsubscribe from a topic.
@@ -274,7 +277,7 @@ public:
 	 *      using the data.
 	 * @return    OK on success, PX4_ERROR otherwise with errno set accordingly.
 	 */
-	int  orb_copy(const struct orb_metadata *meta, int handle, void *buffer);
+	int  orb_copy(struct orb_metadata *meta, int handle, void *buffer);
 
 	/**
 	 * Check whether a topic has been published to since the last orb_copy.
@@ -301,7 +304,7 @@ public:
 	 * @param instance  ORB instance
 	 * @return    OK if the topic exists, PX4_ERROR otherwise.
 	 */
-	int  orb_exists(const struct orb_metadata *meta, int instance);
+	int  orb_exists(struct orb_metadata *meta, int instance);
 
 	/**
 	 * Set the minimum interval between which updates are seen for a subscription.
@@ -366,7 +369,7 @@ private: // class methods
 	 * Handles creation of the object and the initial publication for
 	 * advertisers.
 	 */
-	int node_open(const struct orb_metadata *meta, bool advertiser, int *instance = nullptr);
+	int node_open(struct orb_metadata *meta, bool advertiser, int *instance = nullptr);
 
 private: // data members
 	static Manager *_Instance;

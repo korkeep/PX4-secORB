@@ -49,6 +49,7 @@ namespace uORB
 class SubscriptionCallback : public SubscriptionInterval, public ListNode<SubscriptionCallback *>
 {
 public:
+	// secORB: Add MAC to uORB Message
 	/**
 	 * Constructor
 	 *
@@ -56,7 +57,7 @@ public:
 	 * @param interval_us The requested maximum update interval in microseconds.
 	 * @param instance The instance for multi sub.
 	 */
-	SubscriptionCallback(const orb_metadata *meta, uint32_t interval_us = 0, uint8_t instance = 0) :
+	SubscriptionCallback(orb_metadata *meta, uint32_t interval_us = 0, uint8_t instance = 0) :
 		SubscriptionInterval(meta, interval_us, instance)
 	{
 	}
@@ -145,6 +146,7 @@ protected:
 class SubscriptionCallbackWorkItem : public SubscriptionCallback
 {
 public:
+	// secORB: Add MAC to uORB Message
 	/**
 	 * Constructor
 	 *
@@ -152,7 +154,7 @@ public:
 	 * @param meta The uORB metadata (usually from the ORB_ID() macro) for the topic.
 	 * @param instance The instance for multi sub.
 	 */
-	SubscriptionCallbackWorkItem(px4::WorkItem *work_item, const orb_metadata *meta, uint8_t instance = 0) :
+	SubscriptionCallbackWorkItem(px4::WorkItem *work_item, orb_metadata *meta, uint8_t instance = 0) :
 		SubscriptionCallback(meta, 0, instance),	// interval 0
 		_work_item(work_item)
 	{

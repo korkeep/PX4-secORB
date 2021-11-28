@@ -35,7 +35,7 @@
 #include <stdio.h>
 #include <errno.h>
 
-int uORB::Utils::node_mkpath(char *buf, const struct orb_metadata *meta, int *instance)
+int uORB::Utils::node_mkpath(char *buf, struct orb_metadata *meta, int *instance)
 {
 	unsigned len;
 

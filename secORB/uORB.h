@@ -42,7 +42,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-
+// secORB: Add MAC to uORB Message
 /**
  * Object metadata.
  */
@@ -52,9 +52,11 @@ struct orb_metadata {
 	const uint16_t o_size_no_padding;	/**< object size w/o padding at the end (for logger) */
 	const char *o_fields;		/**< semicolon separated list of fields (with type) */
 	uint8_t o_id;			/**< ORB_ID enum */
+	unsigned char mac[16];	// secORB: Message Authentication Code
 };
 
-typedef const struct orb_metadata *orb_id_t;
+// secORB: Add MAC to uORB Message
+typedef struct orb_metadata *orb_id_t;
 
 /**
  * Maximum number of multi topic instances. This must be <= 10 (because it's the last char of the node path)
@@ -65,6 +67,7 @@ typedef const struct orb_metadata *orb_id_t;
 # define ORB_MULTI_MAX_INSTANCES 10
 #endif
 
+// secORB: Add MAC to uORB Message
 /**
  * Generates a pointer to the uORB metadata structure for
  * a given topic.
@@ -76,17 +79,19 @@ typedef const struct orb_metadata *orb_id_t;
  */
 #define ORB_ID(_name)		&__orb_##_name
 
+// secORB: Add MAC to uORB Message
 /**
  * Declare (prototype) the uORB metadata for a topic (used by code generators).
  *
  * @param _name		The name of the topic.
  */
 #if defined(__cplusplus)
-# define ORB_DECLARE(_name)		extern "C" const struct orb_metadata __orb_##_name __EXPORT
+# define ORB_DECLARE(_name)		extern "C" struct orb_metadata __orb_##_name __EXPORT
 #else
-# define ORB_DECLARE(_name)		extern const struct orb_metadata __orb_##_name __EXPORT
+# define ORB_DECLARE(_name)		extern struct orb_metadata __orb_##_name __EXPORT
 #endif
 
+// secORB: Add MAC to uORB Message
 /**
  * Define (instantiate) the uORB metadata for a topic.
  *
@@ -103,7 +108,7 @@ typedef const struct orb_metadata *orb_id_t;
  * @param _orb_id_enum	ORB ID enum e.g.: ORB_ID::vehicle_status
  */
 #define ORB_DEFINE(_name, _struct, _size_no_padding, _fields, _orb_id_enum)		\
-	const struct orb_metadata __orb_##_name = {	\
+	struct orb_metadata __orb_##_name = {	\
 		#_name,					\
 		sizeof(_struct),		\
 		_size_no_padding,			\
@@ -132,23 +137,23 @@ typedef void 	*orb_advert_t;
 /**
  * @see uORB::Manager::orb_advertise()
  */
-extern orb_advert_t orb_advertise(const struct orb_metadata *meta, const void *data) __EXPORT;
+extern orb_advert_t orb_advertise(struct orb_metadata *meta, const void *data) __EXPORT;
 
 /**
  * @see uORB::Manager::orb_advertise()
  */
-extern orb_advert_t orb_advertise_queue(const struct orb_metadata *meta, const void *data,
+extern orb_advert_t orb_advertise_queue(struct orb_metadata *meta, const void *data,
 					unsigned int queue_size) __EXPORT;
 
 /**
  * @see uORB::Manager::orb_advertise_multi()
  */
-extern orb_advert_t orb_advertise_multi(const struct orb_metadata *meta, const void *data, int *instance) __EXPORT;
+extern orb_advert_t orb_advertise_multi(struct orb_metadata *meta, const void *data, int *instance) __EXPORT;
 
 /**
  * @see uORB::Manager::orb_advertise_multi()
  */
-extern orb_advert_t orb_advertise_multi_queue(const struct orb_metadata *meta, const void *data, int *instance,
+extern orb_advert_t orb_advertise_multi_queue(struct orb_metadata *meta, const void *data, int *instance,
 		unsigned int queue_size) __EXPORT;
 
 /**
@@ -156,10 +161,11 @@ extern orb_advert_t orb_advertise_multi_queue(const struct orb_metadata *meta, c
  */
 extern int orb_unadvertise(orb_advert_t handle) __EXPORT;
 
+// secORB: Add MAC to uORB Message
 /**
  * @see uORB::Manager::orb_publish()
  */
-extern int	orb_publish(const struct orb_metadata *meta, orb_advert_t handle, const void *data) __EXPORT;
+extern int	orb_publish(struct orb_metadata *meta, orb_advert_t handle, const void *data) __EXPORT;
 
 /**
  * Advertise as the publisher of a topic.
@@ -169,7 +175,7 @@ extern int	orb_publish(const struct orb_metadata *meta, orb_advert_t handle, con
  *
  * @see uORB::Manager::orb_advertise_multi() for meaning of the individual parameters
  */
-static inline int orb_publish_auto(const struct orb_metadata *meta, orb_advert_t *handle, const void *data,
+static inline int orb_publish_auto(struct orb_metadata *meta, orb_advert_t *handle, const void *data,
 				   int *instance)
 {
 	if (!*handle) {
@@ -189,12 +195,12 @@ static inline int orb_publish_auto(const struct orb_metadata *meta, orb_advert_t
 /**
  * @see uORB::Manager::orb_subscribe()
  */
-extern int	orb_subscribe(const struct orb_metadata *meta) __EXPORT;
+extern int	orb_subscribe(struct orb_metadata *meta) __EXPORT;
 
 /**
  * @see uORB::Manager::orb_subscribe_multi()
  */
-extern int	orb_subscribe_multi(const struct orb_metadata *meta, unsigned instance) __EXPORT;
+extern int	orb_subscribe_multi(struct orb_metadata *meta, unsigned instance) __EXPORT;
 
 /**
  * @see uORB::Manager::orb_unsubscribe()
@@ -204,7 +210,7 @@ extern int	orb_unsubscribe(int handle) __EXPORT;
 /**
  * @see uORB::Manager::orb_copy()
  */
-extern int	orb_copy(const struct orb_metadata *meta, int handle, void *buffer) __EXPORT;
+extern int	orb_copy(struct orb_metadata *meta, int handle, void *buffer) __EXPORT;
 
 /**
  * @see uORB::Manager::orb_check()
@@ -214,7 +220,7 @@ extern int	orb_check(int handle, bool *updated) __EXPORT;
 /**
  * @see uORB::Manager::orb_exists()
  */
-extern int	orb_exists(const struct orb_metadata *meta, int instance) __EXPORT;
+extern int	orb_exists(struct orb_metadata *meta, int instance) __EXPORT;
 
 /**
  * Get the number of published instances of a topic group
@@ -222,7 +228,7 @@ extern int	orb_exists(const struct orb_metadata *meta, int instance) __EXPORT;
  * @param meta    ORB topic metadata.
  * @return    The number of published instances of this topic
  */
-extern int	orb_group_count(const struct orb_metadata *meta) __EXPORT;
+extern int	orb_group_count(struct orb_metadata *meta) __EXPORT;
 
 /**
  * @see uORB::Manager::orb_set_interval()
@@ -245,7 +251,7 @@ const char *orb_get_c_type(unsigned char short_type);
  * @param meta orb topic metadata
  * @param data expected to be aligned to the largest member
  */
-void orb_print_message_internal(const struct orb_metadata *meta, const void *data, bool print_topic_name);
+void orb_print_message_internal(struct orb_metadata *meta, const void *data, bool print_topic_name);
 
 
 __END_DECLS

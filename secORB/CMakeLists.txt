@@ -55,6 +55,10 @@ px4_add_library(uORB
 	uORBManager.hpp
 	uORBUtils.cpp
 	uORBUtils.hpp
+	# secORB: Add MAC to uORB Message
+	secORB.c
+	secORB.h
+	secORB-32.h
 )
 
 target_compile_options(uORB PRIVATE ${MAX_CUSTOM_OPT_LEVEL})

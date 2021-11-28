@@ -69,6 +69,7 @@ public:
 		_interval_us(interval_us)
 	{}
 
+	// secORB: Add MAC to uORB Message
 	/**
 	 * Constructor
 	 *
@@ -76,7 +77,7 @@ public:
 	 * @param interval The requested maximum update interval in microseconds.
 	 * @param instance The instance for multi sub.
 	 */
-	SubscriptionInterval(const orb_metadata *meta, uint32_t interval_us = 0, uint8_t instance = 0) :
+	SubscriptionInterval(orb_metadata *meta, uint32_t interval_us = 0, uint8_t instance = 0) :
 		_subscription{meta, instance},
 		_interval_us(interval_us)
 	{}
@@ -138,7 +139,9 @@ public:
 	uint8_t		get_instance() const { return _subscription.get_instance(); }
 	uint32_t        get_interval_us() const { return _interval_us; }
 	unsigned	get_last_generation() const { return _subscription.get_last_generation(); }
-	orb_id_t	get_topic() const { return _subscription.get_topic(); }
+	
+	// secORB: Add MAC to uORB Message
+	orb_id_t	get_topic() { return _subscription.get_topic(); }
 
 	/**
 	 * Set the interval in microseconds

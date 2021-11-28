@@ -61,7 +61,8 @@ class UnitTest;
 class uORB::DeviceNode : public cdev::CDev, public IntrusiveSortedListNode<uORB::DeviceNode *>
 {
 public:
-	DeviceNode(const struct orb_metadata *meta, const uint8_t instance, const char *path, uint8_t queue_size = 1);
+	// secORB: Add MAC to uORB Message
+	DeviceNode(struct orb_metadata *meta, const uint8_t instance, const char *path, uint8_t queue_size = 1);
 	virtual ~DeviceNode();
 
 	// no copy, assignment, move, move assignment
