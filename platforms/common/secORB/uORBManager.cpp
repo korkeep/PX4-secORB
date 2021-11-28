@@ -275,8 +275,10 @@ int uORB::Manager::orb_subscribe(struct orb_metadata *meta)
 		//PX4_ERR("mac: %s", mac);
 
 		// secORB: Verify generated MAC
-		if(secORB_verify(meta->mac, mac))
+		if(secORB_verify(meta->mac, mac)){
+			PX4_ERR("mac: %s", mac);
 			return node_open(meta, false);
+		}
 		else
 			return -1;
 	}
@@ -306,6 +308,8 @@ int uORB::Manager::orb_publish(struct orb_metadata *meta, orb_advert_t handle, c
 
 #endif /* ORB_USE_PUBLISHER_RULES */
 
+	const char* str1 = "mission";
+	const char* str2 = "log_message";
 	unsigned char mac[16];
 	unsigned char key[32];
 	size_t i;
@@ -313,10 +317,15 @@ int uORB::Manager::orb_publish(struct orb_metadata *meta, orb_advert_t handle, c
 	// secORB: Generate MAC
 	for(i=0; i<sizeof(key); i++)
 		key[i] = (unsigned char)(i+221);
-	if(strcmp(meta->o_name, "mission") != 0){
+	if(strcmp(meta->o_name, str1) == 0){
 		secORB_auth(mac, (unsigned char *)meta->o_name, meta->o_size, key);
 		//PX4_ERR("key: %s", key);
 		//PX4_ERR("mac: %s", mac);
+	}
+
+	// Debugging...
+	if(strcmp(meta->o_name, str2) != 0){
+		PX4_ERR("msg: %s", meta->o_name);
 	}
 	
 	// secORB: Copy MAC to uORB
