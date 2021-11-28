@@ -262,20 +262,24 @@ int uORB::Manager::orb_unadvertise(orb_advert_t handle)
 // secORB: Add MAC to uORB Message
 int uORB::Manager::orb_subscribe(struct orb_metadata *meta)
 {
-	// char mac[16];
-	// char key[32];
-	// size_t i;
+	unsigned char mac[16];
+	unsigned char key[32];
+	size_t i;
 
-	// // secORB: Generate MAC
-	// for(i=0; i<sizeof(key); i++)
-	// 	key[i] = (char)(i+221);
-	// secORB_auth(mac, (char *)meta->o_name, meta->o_size, key);
+	// secORB: Generate MAC
+	for(i=0; i<sizeof(key); i++)
+		key[i] = (char)(i+221);
+	if(strcmp(meta->o_name, "mission") != 0){
+		secORB_auth(mac, (unsigned char *)meta->o_name, meta->o_size, key);
+		//PX4_ERR("key: %s", key);
+		//PX4_ERR("mac: %s", mac);
+	}
 	
 	// secORB: Verify generated MAC
-	// if(secORB_verify(meta->mac, mac))
+	if(secORB_verify(meta->mac, mac))
 		return node_open(meta, false);
-	// else
-	// 	return -1;
+	else
+		return -1;
 }
 
 int uORB::Manager::orb_subscribe_multi(struct orb_metadata *meta, unsigned instance)
@@ -316,8 +320,6 @@ int uORB::Manager::orb_publish(struct orb_metadata *meta, orb_advert_t handle, c
 	// secORB: Copy MAC to uORB
 	for(i=0; i<sizeof(mac); i++)
 		meta->mac[i] = mac[i];
-
-	//strncpy((char *)meta->mac, (char *)mac, sizeof(meta->mac));
 
 	return uORB::DeviceNode::publish(meta, handle, data);
 }
