@@ -1,4 +1,7 @@
-const char* uORBLists[199]{
+#define TABLE_LENGTH 199
+
+// secORB: Valid uORB topics
+const char* uORBLists[TABLE_LENGTH]{
     "action_request", 
     "actuator_armed", 
     "actuator_controls", 
@@ -199,3 +202,11 @@ const char* uORBLists[199]{
     "wind", 
     "yaw_estimator_status"
 };
+
+int search(const char* target){
+    for(int i=0; i<TABLE_LENGTH; i++){
+        if(strcmp(target, uORBLists[i]) == 0)
+            return 1;
+    }
+    return 0;
+}

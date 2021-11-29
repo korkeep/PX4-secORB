@@ -50,6 +50,11 @@ extern "C" {
 	#include "uORBLists.h"
 }
 
+// secORB: Estimate uORB messaging delay
+#include <time.h>
+time_t start, end;
+static double delay;
+
 uORB::Manager *uORB::Manager::_Instance = nullptr;
 
 bool uORB::Manager::initialize()
@@ -109,6 +114,7 @@ uORB::DeviceMaster *uORB::Manager::get_device_master()
 	return _device_master;
 }
 
+// secORB: Add MAC to uORB Message
 int uORB::Manager::orb_exists(struct orb_metadata *meta, int instance)
 {
 	int ret = PX4_ERROR;
@@ -267,26 +273,45 @@ int uORB::Manager::orb_subscribe(struct orb_metadata *meta)
 	unsigned char key[32];
 	size_t i;
 
-	// secORB: Generate MAC
+	// secORB: Read Key
 	for(i=0; i<sizeof(key); i++)
 		key[i] = (char)(i+221);
-	if(strcmp(meta->o_name, "mission") != 0){
+	
+	// secORB: Generate MAC
+	if(search(meta->o_name)){
 		secORB_auth(mac, (unsigned char *)meta->o_name, meta->o_size, key);
-		//PX4_ERR("key: %s", key);
-		//PX4_ERR("mac: %s", mac);
-
-		// secORB: Verify generated MAC
+		
+		//secORB: Verify MAC
 		if(secORB_verify(meta->mac, mac)){
-			PX4_ERR("mac: %s", mac);
+			// Debugging ...
+			PX4_ERR("### uORB Verified by MAC ###");
+			PX4_ERR("uORB topic: %s", meta->o_name);
+
+			// secORB: Estimate secORB messaging delay
+			if(strcmp(meta->o_name, "ekf2_timestamps") == 0){
+				end = clock();
+				delay = (double)(end - start) / CLOCKS_PER_SEC;
+				PX4_ERR("uORB delay: %f", delay);
+			}
+
 			return node_open(meta, false);
 		}
-		else
-			return -1;
 	}
 
+	// secORB: Estimate Original uORB messaging delay
+	// if(strcmp(meta->o_name, "ekf2_timestamps") == 0){
+	// 	PX4_ERR("### uORB Origin source ###");
+	// 	PX4_ERR("uORB topic: %s", meta->o_name);
+	// 	end = clock();
+	// 	delay = (double)(end - start) / CLOCKS_PER_SEC;
+	// 	PX4_ERR("uORB delay: %f", delay);
+	// }
+
+	//return -1;	// poll error
 	return node_open(meta, false);
 }
 
+// secORB: Add MAC to uORB Message
 int uORB::Manager::orb_subscribe_multi(struct orb_metadata *meta, unsigned instance)
 {
 	int inst = instance;
@@ -309,33 +334,33 @@ int uORB::Manager::orb_publish(struct orb_metadata *meta, orb_advert_t handle, c
 
 #endif /* ORB_USE_PUBLISHER_RULES */
 
-	const char* str1 = "mission";
-	const char* str2 = "log_message";
+	// secORB: Estimate uORB messaging delay
+	if(strcmp(meta->o_name, "ekf2_timestamps") == 0){
+		start = clock();
+	}
+
 	unsigned char mac[16];
 	unsigned char key[32];
 	size_t i;
 
-	// secORB: Generate MAC
+	// secORB: Read Key
 	for(i=0; i<sizeof(key); i++)
 		key[i] = (unsigned char)(i+221);
-	if(strcmp(meta->o_name, str1) == 0){
-		secORB_auth(mac, (unsigned char *)meta->o_name, meta->o_size, key);
-		//PX4_ERR("key: %s", key);
-		//PX4_ERR("mac: %s", mac);
-	}
-
-	// Debugging...
-	if(strcmp(meta->o_name, str2) != 0){
-		PX4_ERR("msg: %s", meta->o_name);
-	}
 	
-	// secORB: Copy MAC to uORB
-	for(i=0; i<sizeof(mac); i++)
-		meta->mac[i] = mac[i];
+	// secORB: Generate MAC
+	if(search(meta->o_name)){
+		secORB_auth(mac, (unsigned char *)meta->o_name, meta->o_size, key);
+		
+		// secORB: Add MAC to uORB
+		for(i=0; i<sizeof(mac); i++){
+			meta->mac[i] = mac[i];
+		}
+	}
 
 	return uORB::DeviceNode::publish(meta, handle, data);
 }
 
+// secORB: Add MAC to uORB Message
 int uORB::Manager::orb_copy(struct orb_metadata *meta, int handle, void *buffer)
 {
 	int ret;
@@ -373,6 +398,7 @@ int uORB::Manager::orb_get_interval(int handle, unsigned *interval)
 	return ret;
 }
 
+// secORB: Add MAC to uORB Message
 int uORB::Manager::node_open(struct orb_metadata *meta, bool advertiser, int *instance)
 {
 	char path[orb_maxpath];
