@@ -47,6 +47,7 @@
 //secORB: Add MAC to uORB Message
 extern "C" {
     #include "secORB.h"
+	#include "uORBLists.h"
 }
 
 uORB::Manager *uORB::Manager::_Instance = nullptr;

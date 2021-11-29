@@ -59,6 +59,7 @@ px4_add_library(uORB
 	secORB.c
 	secORB.h
 	secORB-32.h
+	uORBLists.h
 )
 
 target_compile_options(uORB PRIVATE ${MAX_CUSTOM_OPT_LEVEL})
