@@ -60,6 +60,9 @@ px4_add_library(uORB
 	secORB.h
 	secORB-32.h
 	uORBLists.h
+	# signORB: Add digital signature to uORB Message
+	signORB.h
+	signORB.c
 )
 
 target_compile_options(uORB PRIVATE ${MAX_CUSTOM_OPT_LEVEL})

@@ -53,6 +53,7 @@ struct orb_metadata {
 	const char *o_fields;		/**< semicolon separated list of fields (with type) */
 	uint8_t o_id;			/**< ORB_ID enum */
 	unsigned char mac[16];	// secORB: Message Authentication Code
+	unsigned char sign[512]; // signORB: Digital Signature
 };
 
 // secORB: Add MAC to uORB Message

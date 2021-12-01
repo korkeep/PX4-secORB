@@ -45,12 +45,15 @@
 #include "uORBManager.hpp"
 
 //secORB: Add MAC to uORB Message
+//signORB: Add Digital Signature to uORB Message
 extern "C" {
     #include "secORB.h"
+	#include "signORB.h"
 	#include "uORBLists.h"
 }
 
 // secORB: Estimate uORB messaging delay
+// signORB: Add Digital Signature to uORB Message
 #include <time.h>
 time_t start, end;
 static double delay;
@@ -270,7 +273,9 @@ int uORB::Manager::orb_unadvertise(orb_advert_t handle)
 int uORB::Manager::orb_subscribe(struct orb_metadata *meta)
 {
 	unsigned char mac[16];
+	unsigned char dmac[16];
 	unsigned char key[32];
+	unsigned char data[512] = {0,};
 	size_t i;
 
 	// secORB: Read Key
@@ -279,12 +284,35 @@ int uORB::Manager::orb_subscribe(struct orb_metadata *meta)
 	
 	// secORB: Generate MAC
 	if(search(meta->o_name)){
+
 		secORB_auth(mac, (unsigned char *)meta->o_name, meta->o_size, key);
 		
 		//secORB: Verify MAC
-		if(secORB_verify(meta->mac, mac)){
+		// if(secORB_verify(meta->mac, mac)){
+		// 	// Debugging ...
+		// 	PX4_ERR("### uORB Verified by MAC ###");
+		// 	PX4_ERR("uORB topic: %s", meta->o_name);
+
+		// 	// secORB: Estimate secORB messaging delay
+		// 	if(strcmp(meta->o_name, "ekf2_timestamps") == 0){
+		// 		end = clock();
+		// 		delay = (double)(end - start) / CLOCKS_PER_SEC;
+		// 		PX4_ERR("uORB delay: %f", delay);
+		// 	}
+
+		// 	return node_open(meta, false);
+		// }
+
+		// signORB: Decrypt Digital Signature
+		signORB_decrypt((unsigned char *)meta->sign, sizeof(meta->sign), (unsigned char *)data);
+		for(i=0; sizeof(mac); i++){
+			dmac[i] = data[i];
+		}
+
+		//signORB: Verify MAC
+		if(secORB_verify(dmac, mac)){
 			// Debugging ...
-			PX4_ERR("### uORB Verified by MAC ###");
+			PX4_ERR("### uORB Digital Signature ###");
 			PX4_ERR("uORB topic: %s", meta->o_name);
 
 			// secORB: Estimate secORB messaging delay
@@ -341,6 +369,7 @@ int uORB::Manager::orb_publish(struct orb_metadata *meta, orb_advert_t handle, c
 
 	unsigned char mac[16];
 	unsigned char key[32];
+	unsigned char sign[512];
 	size_t i;
 
 	// secORB: Read Key
@@ -354,6 +383,12 @@ int uORB::Manager::orb_publish(struct orb_metadata *meta, orb_advert_t handle, c
 		// secORB: Add MAC to uORB
 		for(i=0; i<sizeof(mac); i++){
 			meta->mac[i] = mac[i];
+		}
+
+		// signORB: Add Digital Signature to uORB Message
+		signORB_encrypt((unsigned char *)mac, sizeof(mac), sign);
+		for(i=0; i<sizeof(mac); i++){
+			meta->sign[i] = sign[i];
 		}
 	}
 
